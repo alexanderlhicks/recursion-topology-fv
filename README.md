@@ -19,8 +19,6 @@ This repository verifies those composition obligations for the
 > with the RISC-V Sail model.
 
 The result is [`VanillaVM.System.cte_main`](recursion-topology-fv/VMs/VanillaVM/VanillaVM.lean).
-Here ISA means instruction-set architecture; Sail is a language used to specify
-the instruction semantics of architectures such as RISC-V.
 The long-term goal is an end-to-end security claim for a concrete zkVM; the
 [scope ledger](docs/SCOPE.md) identifies the remaining semantic,
 cryptographic, and implementation bridges. This effort corresponds to the
