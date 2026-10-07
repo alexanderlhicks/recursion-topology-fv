@@ -7,6 +7,11 @@ Notation follows the paper:
 (program), `φ_op` (operation predicates), `B` (bus), `Ŝ` (committed state),
 `Com` (commitment), `R*`, `R_{0,*}`, `R_1..R_4` (relations), `Π_i` (SNARKs).
 
+This digest describes the paper, including its idealized probability/runtime
+claims. It is not a list of fully mechanized results. For the current Lean
+theorem and its limits, see [PROOF_MAP.md](PROOF_MAP.md) and [SCOPE.md](SCOPE.md).
+The security account below follows the bundled PDF dated 8 September 2026.
+
 ---
 
 ## 1. Execution model (ch01)
@@ -223,7 +228,7 @@ terminal` abstracts away entirely.
 
 **`thm:main` (Correct-trace extractability) — exact bound.** Let
 `m:=T/N_seg`. For every PPT `A` with `ε:=Adv^cte_zkVM(A)`, ∃ PPT reductions
-`D_4,D_3,D_2,D_1,{D_{0,j}}_j,D_bus,{D^pos_k}_{k=1}^T,{D^upd_k}_{k=1}^T`:
+`D_4,D_3,D_2,D_1,{D_{0,j}}_j,D_bus,{D^pos_k}_{k=1}^T,{D^upd_k}_{k=1}^T,D^pos_fin`:
 ```
 ε ≤ Adv^ks_{Π_4}(D_4)
   + (m-1)·Adv^ks_{Π_3}(D_3)
@@ -231,11 +236,22 @@ terminal` abstracts away entirely.
   + m·( Adv^ks_{Π_1}(D_1) + Σ_{j∈{step,keccak,poseidon,range}} Adv^ks_{Π_{0,j}}(D_{0,j})
         + Adv^cr_{Com_bus}(D_bus) )
   + Σ_{k=1}^{T} ( Adv^pos_{Com_mem}(D^pos_k) + Adv^upd_{Com_mem}(D^upd_k) )
+  + Adv^pos_{Com_mem}(D^pos_fin)
 ```
-All reductions run in `Time(A)+poly(λ)`; overall
-`Time(E_zkVM) ≤ c·Time(A)+poly(λ)`, `c=3m+T` (`A` invoked once per
-Embed/Convert/Combine call = `2m` total, plus `m` Segment calls, plus `T`
-per-step memory-reconstruction calls). Negligible RHS ⇒ CTE.
+The last term accounts for equality with the full claimed terminal memory;
+it is distinct from the per-step binding events (Theorem 27, equation (24),
+printed pp. 29–30). Negligible RHS implies CTE under the paper's extraction
+and resource assumptions, including polynomially bounded lengths.
+
+Printed p. 32 counts `7m` sub-extractor calls: `2m` for
+embed/combine/convert, and `5m` for segment plus four inner extractors.
+Memory reconstruction is deterministic work, not `T` extra extractor calls.
+Under its idealized per-call cost convention, the paper gives
+`Time(E_zkVM) ≤ 7m·Time(A)+poly(λ)` and reduction costs bounded by
+`(7m+1)·Time(A)+poly(λ)`. It explicitly warns that using the literal
+composed-adversary runtime convention can compound to
+`O(m²)·Time(A)` in the worst case. Lean formalizes neither a cost theorem
+nor this advantage bound.
 
 ### 5.2 Reduction structure — one lemma per layer, outermost→innermost, plus
 a per-step memory argument
@@ -248,9 +264,11 @@ a per-step memory argument
    recursively unrolls the tree (well-founded, `rem:wellfounded`: child step
    counts strictly `<N`). Bad event `B_t` at internal node `t`: node's proof
    verifies but `E_{Π_3}` fails to return an `R_3` witness. Exactly `m-1`
-   internal nodes ⇒ `Adv^comb_{N,E_3}(A) ≤ (m-1)·Adv^ks_{Π_3}(D_3)`. Base case
-   `N=N_seg` (`m=1`) is vacuous by *arithmetic contradiction*
-   (`N_L+N_R=N_seg` with both `≥N_seg` is impossible).
+   internal nodes ⇒ `Adv^comb_{N,E_3}(A) ≤ (m-1)·Adv^ks_{Π_3}(D_3)`.
+   Lemma 20 is stated for `N ≥ 2N_seg`; its base case is `N=2N_seg`
+   (`m=2`, one internal node). A combine relation at `N=N_seg` is
+   unsatisfiable because both children have at least `N_seg` steps; this
+   is excluded from the lemma's domain, not a successful extraction case.
 
 3. **Convert** (`lem:convert`): assumes `Π_2` KS; single reduction,
    `Adv^conv_{E_2}(A) ≤ Adv^ks_{Π_2}(D_2)`, applied once per segment (`m`
@@ -263,10 +281,17 @@ a per-step memory argument
    B̂_poseidon, B̂_range` aren't all equal despite committing to the same
    `C_B̂` — a `Com_bus` collision). Off all six, unify buses as `B̂:=B̂_step`
    and combine the four predicates via Eq. `eq:step-bus2` to get full
-   `φ̂_step`. Bound: `Adv^seg_{E_1}(A) ≤ Adv^ks_{Π_1} + Adv^ks_{Π_{0,step}}
+   `φ̂_step`. The paper's bound is:
+
+   ```text
+   Adv^seg_{E_1}(A) ≤ Adv^ks_{Π_1} + Adv^ks_{Π_{0,step}}
    + Adv^ks_{Π_{0,keccak}} + Adv^ks_{Π_{0,poseidon}} + Adv^ks_{Π_{0,range}}
-   + Adv^cr_{Com_bus}`. The active Lean tree does not yet formalize this
-   segment/bus reduction; it is assigned to Issues 2 and 5.
+   + Adv^cr_{Com_bus}
+   ```
+
+   `Bus.System.segment_extract` formalizes the
+   qualitative extraction/bus-agreement result under perfect premises;
+   the numerical advantage bound remains outside the Lean model.
 
 5. **Inner-circuit** (`lem:inner`): each `Π_{0,j}` KS directly gives its
    extractor; `Adv^inner_{j,E_{0,j}}(A) = Adv^ks_{Π_{0,j}}(A)` — no reduction
@@ -281,20 +306,28 @@ a per-step memory argument
      (`Adv^upd_{Com}(A):=Pr[Verify(C,addr,m[addr],π)=1 ∧ Verify(C',addr,x,π)=1
      ∧ C'≠Commit(m[addr↦x])]` negl.). Remark: Merkle trees get both from
      hash collision-resistance.
-   - Statement: given `A` outputting `(Ŝ1,Ŝ2,mem1,mem2,B̂,π^mem)` with matching
-     program counters/registers and `Ŝ_j.mem=Commit(mem_j)`, with `φ̂_step`
-     holding but `φ_step(S1,S2)` (for
-     `S_j:=(Ŝ_j.pc,Ŝ_j.regs,mem_j)`) failing with prob. `ε`, then
-     `ε ≤ Adv^pos_{Com_mem}(D^pos) + Adv^upd_{Com_mem}(D^upd)`.
+   - Statement (Proposition 13): `A` outputs `(Ŝ1,Ŝ2,mem1,B̂,π^mem)`.
+     Its premises include the pre-memory representation
+     `Ŝ1.mem=Commit(mem1)`, the accepted committed step `φ̂_step`, and the
+     corresponding read/write checks for the same `π^mem`. No full
+     post-memory representation is supplied.
+     The reconstruction rule (23) defines `mem2` by preserving memory or
+     updating the written address. Except for the position/update binding
+     events, **both** `Ŝ2.mem=Commit(mem2)` and the ordinary
+     `φ_step(S1,S2)` hold, where `S_j:=(Ŝ_j.pc,Ŝ_j.regs,mem_j)`.
+     The failure probability is bounded by
+     `Adv^pos_{Com_mem}(D^pos) + Adv^upd_{Com_mem}(D^upd)`.
    - Proof: two bad events `E_pos,E_upd` (position/update collisions), one
-     reduction each; then a case-split over every op kind (arithmetic w/wo
-     range, read, write, precompile) showing off both bad events
-     `φ̂_step ⇒ φ_step(...,B) ⇒ φ_step(...)` — the second implication ("Step
-     B: bus elimination") needs no crypto, purely predicate unfolding.
+     reduction each; then a case-split over every op kind. The committed
+     bus's chip predicates discharge only the deferred obligation of the
+     current transition. No full-memory bus is constructed. Write
+     reconstruction proves the post-memory representation rather than
+     assuming it in advance.
    - Used in `thm:main` Step 6 to inductively rebuild `mem_0..mem_T` from the
      committed-state chain + per-step memory-opening witnesses `{π^mem_k}`
      extracted at the Segment layer, contributing the
-     `Σ_{k=1}^T(Adv^pos_k+Adv^upd_k)` tail. `VMs/Memory.lean` formalizes the
+     `Σ_{k=1}^T(Adv^pos_k+Adv^upd_k)` tail, with a separate terminal
+     position-binding term in `thm:main`. `VMs/Memory.lean` formalizes the
      perfect, probability-free reconstruction statement; the explicit
      reductions and advantage sum remain absent (§6).
 
@@ -302,22 +335,28 @@ a per-step memory argument
 
 `E_zkVM` composes the five layer-extractors `E_4,E_3,E_2,E_1,{E_{0,j}}`
 sequentially (Steps 1-4), then the per-step memory-reconstruction argument
-(Steps 5-6). Every reduction is a single run of `A` + `poly(λ)`
-(`Time(D)=Time(A)+poly(λ)`); the aggregate `c=3m+T` blow-up in
-`Time(E_zkVM)` comes purely from *invocation count* (once per
-Embed/Convert/Combine, `m` for Segment, `T` for memory reconstruction), not
-from expensive individual reductions.
+(Steps 5-6). The final extractor does not run `A`. Each reduction runs `A`
+once and performs the extraction chain needed above its own layer.
+The `7m` call count and `7m+1` reduction factor use the paper's idealized
+per-call convention; its explicit composed-adversary runtime caveat is
+recorded in Section 5.1. These remain paper-level cost claims, not verified Lean
+algorithmic guarantees.
 
 ### 5.4 Idealization caveats (flagged by the paper itself, `rem:idealized`)
 
-(i) `def:extractable` postulates a **straight-line** extractor in
-`Time(A)+poly(λ)` — impossible for *succinct* proofs in the plain model,
-only exists in the ROM. (ii) Composing straight-line extraction *across
-recursion layers* (PCD) needs each SNARK knowledge-sound *relative to the
-same random oracle* ("relativized"), and relativized SNARKs provably don't
-exist in general (`EPRINT:relativized`) — the paper explicitly idealizes over
-this. So `thm:main`'s bounds validate the **reduction structure/topology**,
-not a concrete security level.
+The paper postulates straight-line component extractors with resource bounds
+and warns that the construction is idealized. Connecting concrete component
+extraction in the ROM to recursion needs a justified interface for relations
+that themselves verify proofs and query the oracle. General relativized
+succinct arguments in the ROM are ruled out (`EPRINT:relativized`); that
+obstruction is not a proof that every recursive construction is impossible.
+
+The current Lean predicate is an unrestricted witness function, not the
+resource-bounded computational assumption discussed by that warning.
+Consequently neither the idealized paper bound nor the Lean conditional
+theorem establishes a concrete deployed security level. See
+[IDEALIZATION.md](../IDEALIZATION.md) and [SCOPE.md](SCOPE.md) for the
+distinction and the unresolved recursive-extraction bridge.
 
 ---
 

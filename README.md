@@ -1,75 +1,125 @@
 # recursion-topology-fv
 
-Our goal is an end-to-end claim about the security of zkVMs like *"this zkVM provides 128-bit security."* (we are not there yet)
+Lean 4 proofs that the relations in a simplified recursive zero-knowledge
+virtual machine (zkVM) architecture compose into a full execution trace.
 
-Why is this hard: A zkVM splits execution into segments and uses recursion to joins the segment proofs into one final proof.  Sound individual
-proofs are not enough. The pieces must also agree: segment 2 must start where segment 1 ended, and the memory of the VM
-must stay consistent. This project proves in Lean4 that all these pieces fit together.
+A zkVM splits execution into segments and joins their proofs recursively.
+Individual proof-system guarantees do not establish that the segments meet at
+the same states, use consistent memory, or check the same deferred operations.
+This repository verifies those composition obligations for the
+[VanillaVM architecture](docs/vanillaVM.pdf).
 
-In our v1 release, we study the [**VanillaVM**](./docs/vanillaVM.pdf), a simplified recursion-based zkVM.
-
-This effort corresponds to the [W3 deliverable](https://zkevm.ethereum.foundation/blog/cryptography-research-update) from our zkVM security sprint.
-
-> **Status (v1):** We prove the security of VanillaVM, but some parts of the proof are idealized.
-> See [IDEALIZATION.md](IDEALIZATION.md).
+> **v1 result:** under explicit perfect extraction and commitment assumptions,
+> every accepted final proof yields a full-memory trace of the fixed number of
+> steps, with the claimed initial and final states, satisfying the configured
+> representative ISA relation at every step.
 >
-> TODO for v2:
-> - A better model of recursive proof composition.
-> - Adversary success probabilities and running times.
+> This is a conditional architecture theorem. v1 does not establish the
+> security of a deployed zkVM, a concrete bit-security bound, or correspondence
+> with the RISC-V Sail model.
 
-----
+The result is [`VanillaVM.System.cte_main`](recursion-topology-fv/VMs/VanillaVM/VanillaVM.lean).
+Here ISA means instruction-set architecture; Sail is a language used to specify
+the instruction semantics of architectures such as RISC-V.
+The long-term goal is an end-to-end security claim for a concrete zkVM; the
+[scope ledger](docs/SCOPE.md) identifies the remaining semantic,
+cryptographic, and implementation bridges. This effort corresponds to the
+[W3 deliverable](https://zkevm.ethereum.foundation/blog/cryptography-research-update)
+from the zkVM security sprint.
 
-## Correct-Trace Extractability
+## Start here
 
-*Correct-Trace Extractability* (CTE) is the keystone security property we prove about a zkVM. It informally says: **if the verifier
-accepts a proof, then a real execution exists behind it.**
+| Question | Read |
+|---|---|
+| What is proved, and how do the pieces compose? | [Proof map and core definitions](docs/PROOF_MAP.md) |
+| Which assumptions and trusted components does it rely on? | [Trust and assumption ledger](docs/PROOF_MAP.md#trust-and-assumption-ledger) |
+| What is abstracted, absent, or requires a different model? | [Scope and refinement boundaries](docs/SCOPE.md) |
+| How do the paper and Lean each approximate a real zkVM? | [Model-to-reality ledger](docs/CORRESPONDENCE.md#model-to-reality-ledger) |
+| What do the perfect cryptographic predicates mean? | [Idealization notes](IDEALIZATION.md) |
+| Which parts have computational implementations or classical dependencies? | [Computability and execution boundaries](docs/COMPUTABILITY.md) |
+| How do the Lean statements relate to the paper? | [Correspondence matrix](docs/CORRESPONDENCE.md) and [math companion](docs/math-companion.md) |
 
-Let's break it down:
+## Correct-trace extractability
 
-A statement `x` claims "the VM goes from initial state A to final state B". CTE holds if there is an
-extractor `E`, such that for every statement `x` and every accepting proof `p`, `E` given `(x,p)`, extracts:
-- a valid trace: the list of intermediate VM states, step by step;
-- a private input, if the VM uses one.
+*Correct-trace extractability* (CTE) says that one extractor maps every accepted
+statement/proof pair to a valid execution trace and, where applicable, a private
+input. Validity checks both endpoints and every transition up to the fixed step
+count `T`. The trace is represented by a function `ℕ → State`, whose values
+after `T` are irrelevant.
 
-In Lean ([`Specification/Cte.lean`](recursion-topology-fv/Specification/Cte.lean)):
+The [actual definition](recursion-topology-fv/Specification/Cte.lean) is:
 
 ```lean
 def CTE : Prop :=
   ∃ E : V.Stmt → V.Proof → V.PrivInput × (ℕ → V.State),
-    ∀ (x : V.Stmt) (p : V.Proof), V.verify x p → V.TraceValid x (E x p).1 (E x p).2
+    ∀ (x : V.Stmt) (p : V.Proof),
+      V.verify x p → V.TraceValid x (E x p).1 (E x p).2
 ```
 
-This is essentially knowledge soundness for a relation that claims that a VM executed correctly (see `cte_iff_knowledgeSound`).
+For the assembled VanillaVM, the statement gives full initial and final states,
+the private-input type is `Unit`, and the final verifier receives their
+committed boundaries. The step predicate is `ISA.System.stepPlain`: five
+operation classes with parameterized non-memory semantics, not decoded RISC-V.
 
-In v1 our extractor is a plain function, with no probabilities or running times.
+The extractor is an unrestricted mathematical function. Its existence does not
+establish computability, efficient knowledge extraction, a failure probability,
+or zero knowledge. The main theorem assumes eight proof-system extraction
+properties, bus-hash injectivity, and three memory-commitment properties; the
+[proof map](docs/PROOF_MAP.md) shows each use and the derived leaf guarantee.
+
+## Proof flow
+
+```mermaid
+flowchart TD
+    Inner["Step, hash and range inner-proof assumptions"]
+    Segment["Segment extraction: one shared bus and committed trace"]
+    Tree["Convert / combine / embed: recursive committed trace"]
+    Memory["Memory reconstruction and full endpoint equality"]
+    CTE["cte_main: CTE for the configured ISA"]
+    Inner --> Segment
+    Segment -->|derived leaf extraction| Tree
+    Tree --> Memory
+    Memory --> CTE
+```
+
+Arrows show proof flow, not all premises or module imports. Each stage has
+explicit assumptions listed in the [detailed map](docs/PROOF_MAP.md).
 
 ## Project layout
 
-**Library.** Generic code, shared by every VM.
+| Path | Role |
+|---|---|
+| `Preliminaries/` | Relations, argument/extractor and commitment interfaces; trace concatenation |
+| `Specification/` | Abstract `ZkVM`, trace validity and CTE |
+| `VMs/State.lean`, `Memory.lean`, `ISA.lean` | State representation, memory reconstruction and representative instruction relations |
+| `VMs/Bus.lean`, `Step.lean` | Segment bus extraction and step-interface packaging |
+| `VMs/MultiStep/` | Recursive convert/combine/embed composition over an abstract leaf proof system |
+| `VMs/VanillaVM/` | Assembly deriving leaf extraction from the bus theorem |
+| `VMs/NonDeterministic/` | Private-input wrapper for an abstract base VM |
+| `*Sanity.lean` | Accepting models and negative examples |
 
-- `recursion-topology-fv/Preliminaries/`: Generic cryptography, definitions only (argument systems, commitments, traces)
-- `recursion-topology-fv/Specification/`: What a zkVM is and what it must prove (CTE)
-- `recursion-topology-fv/VMs/*.lean`: Shared VM building blocks (state, memory, ISA, bus, step contract)
-- `recursion-topology-fv/VMs/NonDeterministic/`: Generic wrapper that adds private input to any zkVM
+Lean paths above are relative to `recursion-topology-fv/`.
+The [source map](docs/PROOF_MAP.md#source-map) gives links and a reading order.
 
-**Integrated VMs.**
+For a simpler introduction before studying recursive composition, see
+[`TwoStep`](recursion-topology-fv/VMs/TwoStep/TwoStep.lean). It illustrates flat
+two-layer proof composition and memory reconstruction; it is not part of the
+main MultiStep proof flow. Its name refers to proof layers, not guest instructions.
 
-- `recursion-topology-fv/VMs/TwoStep/`: Minimal two-layer VM, with and without a bus
-- `recursion-topology-fv/VMs/MultiStep/`: Recursive multi-step VM resembling the VanillaVM recursion architecture
-- `recursion-topology-fv/VMs/VanillaVM/`: The [VanillaVM](./docs/vanillaVM.pdf)
-
-Dependencies should point one way: `Preliminaries/` → `Specification/` → `VMs/`.
-
-## Build
+## Build and check
 
 ```bash
 lake exe cache get
 lake build
+python3 scripts/ci_checks.py --self-test \
+  --check-correspondence --check-axioms --check-hygiene
 ```
 
-Requires the toolchain pinned in `lean-toolchain` and Mathlib `v4.32.0-rc1` (see `lakefile.toml`).
-Every PR must keep `lake build` green and satisfy `#print axioms` ⊆ `{propext, Classical.choice,
-Quot.sound}`.
+Use the toolchain in [`lean-toolchain`](lean-toolchain) and dependencies pinned
+in [`lake-manifest.json`](lake-manifest.json). CI builds every discovered project
+module, checks selected correspondence names, and checks headline and
+whole-project axiom dependencies against `{propext, Classical.choice, Quot.sound}`.
+See [what these checks establish](docs/PROOF_MAP.md#validation-boundary).
 
 ## License
 

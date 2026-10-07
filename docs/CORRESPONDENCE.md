@@ -1,9 +1,113 @@
-# CORRESPONDENCE — Lean ↔ paper matrix
+# CORRESPONDENCE — model boundaries and Lean ↔ paper
 
-One row per formalized paper item. This is the surface a reviewer reads **with the paper open next
-to it** (Hicks: the finality-repo handover pattern). It is also the audit anchor: a reviewer's
-sign-off is a per-row act ("this Lean declaration faithfully and completely formalizes this paper
-statement"). Adapted from `finality/CORRESPONDENCE.md`.
+There are two separate correspondence questions: **does the model describe the
+chosen deployed zkVM?** and **does the Lean formalization match the paper?**
+The ledger below answers the first by recording the paper's abstractions and
+Lean's additional changes. The later fidelity matrix addresses the second.
+Proving a paper theorem in Lean does not establish the missing correspondence
+to concrete instructions, cryptographic algorithms, or deployed verifier code.
+
+For the exact conditional theorem and its proof chain, see
+[PROOF_MAP.md](PROOF_MAP.md). For refinement options and limits of the perfect
+premises, see [SCOPE.md](SCOPE.md).
+
+## Model-to-reality ledger
+
+A zero-knowledge virtual machine (zkVM) uses proofs to certify machine
+executions. Its instruction-set architecture (ISA) specifies those executions.
+A succinct non-interactive argument of knowledge (SNARK) supplies short proofs
+with a computational extraction guarantee. The paper describes a representative
+architecture for such a system; the Lean theorem concerns the mathematical
+relations defined in this repository. Neither is a specification of a pinned
+implementation.
+
+The **paper column describes the bundled PDF dated 8 September 2026**. Its
+page/section links are evidence for the comparisons, not required background:
+the differences and their consequences are stated here.
+
+| Area | Paper abstraction or idealization | Lean treatment | Missing obligation for a deployed claim |
+|---|---|---|---|
+| Instruction semantics | RV32IM plus precompiles is the intended machine, but operation predicates are treated as black boxes; instruction internals are not supplied ([Ch. 1](vanillaVM.pdf#page=2), [Ch. 3](vanillaVM.pdf#page=6)) | [`ISA.System`](../recursion-topology-fv/VMs/ISA.lean) has five operation classes with supplied predicates and interpretation maps. Code selection and memory effects are checked, but the predicates are not identified with decoded RISC-V instructions | Prove decoding, opcode coverage, finite-word arithmetic, and refinement of all supported operations to the selected executable ISA specification, such as Sail |
+| State representation | Describes 32-bit PC/register values, a finite register file and byte-addressed memory ([Ch. 1](vanillaVM.pdf#page=2)) | [`Word := ℕ`](../recursion-topology-fv/VMs/State.lean), registers `ℕ → Word`, and memory `Index → Value` for supplied types; these types alone enforce neither 32-bit bounds nor the architectural register/byte domains | Supply concrete encodings and state invariants; prove that every modeled transition preserves them and corresponds to the intended machine state |
+| Deferred operations and bus | Uses a shared bus and chip predicates; asks implementers to specify the lookup mechanism ([Ch. 3](vanillaVM.pdf#page=5)) | [`Bus`](../recursion-topology-fv/VMs/Bus.lean) uses three lists, membership and universal chip validity. Injectivity equates the four inner witnesses' buses within a segment. Extra valid entries are permitted | Connect actual interaction messages, multiplicities and lookup constraints to these relations; verify hash/range operations and any global program/memory interaction semantics |
+| Extraction and recursive security | Postulates one efficient straight-line extractor from statement/proof alone, with negligible error and additive runtime overhead. Remark 2 explicitly idealizes its composition across recursion and warns against reading the bounds as a concrete security level ([§5.1](vanillaVM.pdf#page=13)) | [`KnowledgeSound`](../recursion-topology-fv/Preliminaries/ArgumentSystem.lean) instead requires one unrestricted total witness function correct for **every** accepted pair. There are no adversaries, probabilities, oracle model or runtime bounds. Eight such properties are premises of the assembly | Establish a construction-specific extraction experiment, including oracle access and auxiliary inputs, and prove an applicable composition theorem. Ordinary efficient knowledge soundness does not automatically instantiate the perfect predicate |
+| Memory and bus commitments | Defines probabilistic position/update binding and bus collision resistance against efficient adversaries. Suggests Merkle trees but leaves their binding proof out; commitment keys are omitted ([§5.1](vanillaVM.pdf#page=14)) | [`PositionBinding`, `UpdateBinding`, `Complete`](../recursion-topology-fv/Preliminaries/VectorCommitment.lean) are universal error-free predicates; [`CollisionResistant`](../recursion-topology-fv/Preliminaries/HashCommitment.lean) is global injectivity. No concrete compressing scheme, keyed setup or binding reduction is supplied | Specify algorithms, encodings, parameters and any keys; prove computational binding/collision bounds and propagate them through composition. Perfect injectivity on a larger domain than a finite digest space is impossible; replacing these premises requires a different security interface |
+| Circuit and verifier correspondence | Describes the inner/segment/convert/combine/embed relations and verifier hierarchy schematically ([Ch. 4](vanillaVM.pdf#page=9)); does not prove correspondence to deployed code | Relations and supplied verifiers are Lean predicates. [`MultiStep`](../recursion-topology-fv/VMs/MultiStep/MultiStep.lean) proves their qualitative composition; [`VanillaVM`](../recursion-topology-fv/VMs/VanillaVM/VanillaVM.lean) derives its leaf guarantee from the bus proof. No constraint extraction or executable-verifier bridge is included | Prove that the actual constraints implement each relation and that recursive/final verifier code implements the modeled checks, including field encodings, transcripts and statement/key binding |
+| Lengths and public endpoints | Fixes code and duration `T`, requires equal padded segment lengths, `n ∣ T`, `T ≥ 2n` and `T ≤ poly(λ)`. CTE statements contain full start/end memory; the resulting boundary verifier is expressly not succinct ([Ch. 2](vanillaVM.pdf#page=4), [Defs. 9–11](vanillaVM.pdf#page=15)) | Retains positive fixed segment length, divisibility, minimum duration and full-state endpoints. There is no security parameter or polynomial-duration condition; padding, boot/halt behavior and a serialized public receipt are not implemented | Prove the actual length/padding conventions, boot and termination rules, public input/output encoding, and program/key identity. Relate a practical receipt to the full-state statement |
+| Quantitative security | Theorem 27 accounts for component extraction, bus collisions, per-step memory binding and a **separate terminal-memory binding** event; runtime bookkeeping remains subject to the extraction idealization ([§5.4](vanillaVM.pdf#page=29)) | [`cte_main`](../recursion-topology-fv/VMs/VanillaVM/VanillaVM.lean) proves a perfect conditional trace theorem, with no advantage inequality or runtime theorem. The digest records paper bounds; recording them does not mechanize them | Formalize the security games, reductions, total error and runtime bounds for the actual construction and parameters before quoting a security level |
+| Completeness and privacy | Explicitly leaves completeness definitions to implementers (§5.1); CTE is an extraction/soundness property, not a privacy theorem | No prover, end-to-end honest-proving completeness or zero-knowledge simulation theorem. Commitment `Complete` only checks honest openings; accepting sanity instances only witness satisfiable hypotheses | Show that every allowed valid execution has correctly generated witnesses and accepted final proofs. Prove any claimed privacy property separately |
+| Application claim | Motivates the architecture using an Ethereum state-transition program and initial/final state ([Ch. 1](vanillaVM.pdf#page=2)); the security relation is parameterized by operation predicates and fixed code | The assembly proves a trace for the **configured ISA** between supplied full states. It does not verify a compiler, guest application or Ethereum transition function | Connect program compilation/loading, permitted inputs or hints, and public outputs to the application's specification |
+
+Two examples clarify the distinction. A proof that all extracted hash calls
+satisfy a supplied predicate does not establish Keccak correctness until that
+predicate is connected to the intended permutation and its constraints. A proof
+that equal bus digests imply equal buses uses **injectivity** here; a real finite
+digest instead needs a computational collision argument and a failure term.
+
+The paper already idealizes recursive extraction; Lean further changes the
+security interface by dropping its error and resource accounting. The Lean
+interface is stronger about correctness of every accepted pair, while imposing
+fewer computational requirements on the witness function. It is therefore not
+simply the paper's computational theorem with its bounds set to zero.
+For inhabited witness types, classical choice equates the current extraction
+predicate with existence of a valid witness for each accepted pair; this alone
+does not produce an executable extractor. See [IDEALIZATION.md](../IDEALIZATION.md).
+
+### Computability of extraction
+
+The paper's Definition 3 **requires a probabilistic polynomial-time extractor**:
+an algorithm, not just a witness-selection function. In its intended
+random-oracle model, the algorithm's permitted oracle access must also be
+specified. The paper's extraction and composition assumptions are idealized;
+writing down that requirement does not construct such an extractor for a
+deployed proof system.
+
+The Lean result does not establish that computational requirement. There are
+three separate gaps:
+
+1. **The primitive interface does not require an algorithm.**
+   [`Extractor.extract`](../recursion-topology-fv/Preliminaries/ArgumentSystem.lean)
+   is a function between arbitrary types. `KnowledgeSound` asserts its existence
+   and correctness, without finite encodings, computability or runtime premises.
+   It permits computable instances but does not require them.
+2. **The assembled extractor selects memory witnesses by classical choice.**
+   [`MultiStep.System.cte`](../recursion-topology-fv/VMs/MultiStep/MultiStep.lean)
+   uses [`chooseMemStep`](../recursion-topology-fv/VMs/Memory.lean), explicitly
+   declared `noncomputable`. It tests whether *some* witness satisfies an
+   arbitrary acceptance predicate and uses `h.choose` to select one. This is
+   not a search algorithm. Even computable primitive extractors would not, by
+   themselves, make this assembly executable. A constructive assembly should
+   retain the extracted memory witnesses through recursive trace composition.
+3. **Generic state reconstruction uses classical equality.**
+   `stepReconstruct` and `reconstructTrace` are also `noncomputable`: a write
+   tests equality in the arbitrary memory-index type, without requiring a
+   supplied decision procedure. Concrete finite addresses can have decidable
+   equality; that representation and a constructive reconstruction still need
+   to be supplied, together with computational interfaces for the other data.
+
+These observations do **not** prove that every concrete instance lacks a
+computable extractor. A `noncomputable` declaration identifies how the present
+definition was constructed; it is not a proof that no equivalent algorithm can
+exist. Nor do these gaps invalidate the kernel-checked existence/correctness
+theorem. They prevent reading that theorem as a verified executable extractor
+or a polynomial-time knowledge guarantee. Establishing computability and
+bounding runtime are distinct further obligations.
+
+The [computability inventory](COMPUTABILITY.md) audits every source module,
+including the supplied verifiers/commitments, constructive trace composition,
+classical reconstruction, private-input wrapper and accepting examples. It
+also records the checked axiom footprints and explains why neither `#print
+axioms` nor the absence of a `noncomputable` marker certifies an arbitrary
+interface function's computability.
+
+## Paper-to-Lean fidelity matrix
+
+The remaining sections have one row per formalized paper item. A reviewer's
+sign-off is a per-row judgment that a Lean declaration faithfully and completely
+formalizes the selected paper item. Read those cells together with the
+model-to-reality ledger: they do not certify a concrete instantiation or imply
+that probability/runtime content has been mechanized. The existing reviewer
+cells are retained as the review record.
 
 **Status vocabulary:** `stated` (statement written, proof may be `sorry`) · `proved` (proof
 complete, axiom-clean) · `pending(N)` (blocked on N other rows) · `n/a` (Lean-only scaffolding, no
@@ -16,6 +120,11 @@ date.
 
 **Rule (I1, CI-checked):** every declaration formalizing a paper notion has a docstring citing the
 paper label AND a row here; the named Lean declaration must actually elaborate (`#check`).
+
+The automated correspondence check elaborates qualifying declaration names.
+Docstring/paper fidelity, completeness of coverage, and reviewer sign-offs
+remain human review obligations; the separate hygiene gate checks admissions
+and axiom dependencies.
 
 **Paper:** [`vanillaVM.pdf`](vanillaVM.pdf). In particular, `code` and `T` are
 fixed system parameters in `def:cte`.

@@ -6,6 +6,10 @@ states it in ordinary mathematical notation with its paper citation, so a review
 compare **paper ↔ companion ↔ Lean** without reading proof internals. The companion,
 `docs/CORRESPONDENCE.md`, and the Lean must agree; a discrepancy is a review blocker.
 
+For a shorter source-linked tour of the theorem chain and its explicit premises,
+see [PROOF_MAP.md](PROOF_MAP.md). [SCOPE.md](SCOPE.md) distinguishes the current
+result from concrete cryptographic, ISA, and deployment obligations.
+
 Paper: [`vanillaVM.pdf`](vanillaVM.pdf). Anchors below cite chapters/labels.
 
 ---
@@ -24,12 +28,14 @@ predicate `verify x π`. Only the verifier is modeled — the prover plays no ro
 soundness, so it is omitted.
 *Lean:* `ArgumentSystem R`.
 
-**Extractor.** `E : Stmt × Proof → Wit`, straight-line (no rewinding, no access to the
-adversary's code).
+**Extractor.** A mathematical witness function `E : Stmt × Proof → Wit`.
+Its type supplies no adversary argument, but does not require computability or
+certify an operational straight-line algorithm. The paper imposes stronger
+algorithmic requirements; see [computability boundaries](COMPUTABILITY.md).
 *Lean:* `Extractor R AS`.
 
 **Knowledge soundness** (`def:extractable`, ch05). `AS` is knowledge-sound iff there
-exists a single universal straight-line extractor `E` such that
+exists a single uniform mathematical witness function `E` such that
 
     ∀ x, π.   verify x π = 1  ⟹  (x ; E(x, π)) ∈ R.
 
@@ -589,7 +595,7 @@ whole execution:
     ( (S₀, S_T) ; π ) ∈ R_4  :⟺  combineVerify (S₀, S_T, T) π = 1.
 
 **Assumptions.** Knowledge soundness of all four argument systems
-`Π_leaf, Π_2, Π_3, Π_4`, giving straight-line extractors `E_leaf, E_c, E_cb, E_e`,
+`Π_leaf, Π_2, Π_3, Π_4`, giving mathematical extractors `E_leaf, E_c, E_cb, E_e`,
 together with memory-commitment completeness, position binding, and update
 binding. Keeping these facts in one structure makes every hypothesis used by
 the full-memory CTE theorem visible at its call site.
@@ -640,6 +646,12 @@ and the proof — not an existential. Writing `x := (S₀, S_N, N)`:
 Totality forces the three `const S₀` branches; the lemma below shows a verifying
 proof never reaches them. Termination is the measure of §4.4: the guard
 `w.N_L < N ∧ w.N_R < N` is in scope at exactly the two recursive calls.
+
+This is constructive composition relative to the supplied extractors and data.
+Their computability is not part of `KnowledgeSound`; termination of the
+composition therefore does not prove an executable end-to-end extractor or a
+runtime bound. The returned trace is a state-query function, not a materialized
+finite output.
 
 **Tree unrolling (`lem:combine`).** For all `N` with `N_seg ∣ N` and `N ≥ N_seg`,
 all committed boundaries `S₀, S_N`, and all `π ∈ ConvertProof ⊎ CombineProof`,
@@ -738,13 +750,18 @@ witnessed by the **explicit** extractor
     E_full(x, π) := ( (),  reconstructTrace( E(toCommitted x.S₀, toCommitted x.S_T, π),
                                              chooseMemStep(…), x.S₀ ) ).
 
-No choice principle is applied to the conclusion — the trace `CTE` promises is
-the one `buildTrace` computes. The single unavoidable selection is
-`chooseMemStep`, which picks a `MemStep` out of `committedStep`'s existential; it
-belongs to the memory layer (§1.3) and is inherited, not introduced here. This
-shows up in the axiom footprints: `buildTrace`, `combine_tree`, and
-`committedTrace_extract` are free of `Classical.choice`; only `cte` carries it,
-with exactly the same footprint as `TwoStep.System.cte`.
+The conclusion exhibits a particular mathematical witness function, but its
+body contains classical operations. `chooseMemStep` selects a `MemStep` from
+`committedStep`'s existential, and `reconstructTrace` uses classical equality on
+the arbitrary index type when applying writes. These definitions are explicitly
+`noncomputable`; both dependencies can be addressed by a constructive
+refinement with retained witnesses and effective index equality. They are not
+unavoidable obstacles for every concrete instance.
+
+The axiom footprints agree with this boundary: `buildTrace`, `combine_tree` and
+`committedTrace_extract` are free of `Classical.choice`; final `cte` includes it.
+That does not certify computability of the component functions, which remain
+arbitrary parameters. See the [full inventory](COMPUTABILITY.md).
 
 *Lean:* `committedTrace_extract`, `FinalStmtFull`, `toCommitted`, `toZkVM`,
 `CommittedTraceValid`, `traceValid_full`,
